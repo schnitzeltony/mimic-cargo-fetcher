@@ -15,7 +15,7 @@ import json
 import toml
 #import pytoml as toml
 
-from bb.utils import is_semver
+from bb.utils import is_semver, vercmp_string_op
 
 class CrateDependencies:
     def __init__(self, crate_name, crate_version, crate_lockfile, reg_index_basepath):
@@ -97,20 +97,38 @@ class CrateDependencies:
 
     @staticmethod
     def version_acceptable(version, version_rules):
-        # quick easy out
-        if version == version_rules:
-            return True
-        # Check if version matches requirements in version_rules. We process
+        # quick out (e.g Cargo.lock versions are expicit / no requirements)
+        rule_list_in = version_rules.split(',')
+        comparison_chars = ['>', '<', '=', '!']
+        requirement_chars = ['^', '~', '*'] + comparison_chars
+        rules_have_requirements = any(req_char in version_rules for req_char in requirement_chars)
+        if len(rule_list_in) == 1 and not rules_have_requirements:
+            return version == version_rules
+
+        def calcversion_ranges(version_split, increment_pos):
+            version_split_end = version_split.copy()
+            version_split_end[increment_pos] = str(int(version_split_end[increment_pos] or '0')+1)
+            for subver in range(increment_pos+1, len(version_split_end)):
+                version_split_end[subver] = '0'
+            # stuff with trailing '0' / make string rule
+            version_split += ['0'] * (3 - len(version_split))
+            version_split_end += ['0'] * (3 - len(version_split_end))
+            version_start = '>=' + separator.join(version_split)
+            version_end = '<' + separator.join(version_split_end)
+            return version_start,version_end
+
+        # Check if version has requirements. We process
         # * caret
         # * tilde
         # * wildcard
         # * multiple rules
         # see https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html
-        rule_list_in = version_rules.split(',')
         rule_list_out = []
         for rule in rule_list_in:
             separator = '.'
             version_split = rule.split(separator)
+            version_start = ""
+            version_end = ""
             # We do support carot OR tilde on first postion only
             # caret
             if version_split[0].startswith('^'):
@@ -123,22 +141,50 @@ class CrateDependencies:
                         break
                     elif subver+1 < len(version_split):
                         increment_pos = subver+1
-                version_split_end = version_split.copy()
-                version_split_end[increment_pos] = str(int(version_split_end[increment_pos] or '0')+1)
-                for subver in range(increment_pos+1, len(version_split_end)):
-                    version_split_end[subver] = '0'
-                # stuff with trailing '0' / make string rule
-                version_split += ['0'] * (3 - len(version_split))
-                version_split_end += ['0'] * (3 - len(version_split_end))
-                version_start = '>=' + separator.join(version_split)
-                version_end = '<' + separator.join(version_split_end)
-                rule_list_out.append(version_start)
-                rule_list_out.append(version_end)
+                version_start, version_end = calcversion_ranges(version_split, increment_pos)
             # tilde
             elif version_split[0].startswith('~'):
                 version_split[0] = version_split[0].replace('~', '')
+                increment_pos = 1
+                if len(version_split) == 1:
+                    increment_pos = 0
+                version_start, version_end = calcversion_ranges(version_split, increment_pos)
+            # wildcard
+            elif rule.endswith('*'):
+                if version_split[0] == '*':
+                    version_start = '>=0.0.0' # This should not be found in index
+                else:
+                    increment_pos = 0
+                    if len(version_split) > 2 and version_split[2] == '*':
+                        increment_pos = 1
+                    # replace * will go calcversion_ranges does not replace all
+                    for subver in range(0, len(version_split)):
+                        if version_split[subver] == '*':
+                            version_split[subver] = '0'
+                    version_start, version_end = calcversion_ranges(version_split, increment_pos)
+            # comparison
+            else:
+                version_start = rule
+            if version_start != "":
+                rule_list_out.append(version_start)
+            if version_end != "":
+                rule_list_out.append(version_end)
+            print(rule, '->', version_start, version_end)
 
-        return False
+        # here rule_list_out is set with comparison requirement only
+        all_rules_pass = True
+        for rule in rule_list_out:
+            # extract operator
+            for pos in range(0, len(rule)):
+                if not rule[pos] in comparison_chars:
+                    break
+            cmp_operator = rule[0:pos]
+            cmp_version = rule[pos:]
+            if not vercmp_string_op(version, cmp_version, cmp_operator):
+                all_rules_pass = False
+
+        return all_rules_pass
+
     @staticmethod
     def find_crate_in_index(crate_name, version_required_rules, reg_index_basepath):
         crate_info_found = {}
@@ -168,34 +214,37 @@ class CrateDependencies:
         if index_info != {}:
             dependency_found = True
             for depend in index_info["deps"]:
-                print(depend)
                 # Dependency entries in index do not pin version -> find matching
-                depend_in_index = CrateDependencies.find_crate_in_index(depend["name"], depend["req"], reg_index_basepath)
+                depend_in_index = CrateDependencies.find_crate_in_index(
+                    depend["name"], depend["req"], reg_index_basepath)
                 if depend_in_index != {}:
-                    depend["version"] = depend_in_index["version"]
-
-
-                 #   self.add_crate(dependency, "req", False)
-
+                    depend["version"] = depend_in_index["vers"]
+                    self.add_crate(depend, "version", False)
+                    # TODO add depends of depend
+                    #find_crate_dependencies_in_index(self, depend["name"], crate_version, reg_index_basepath)
         return dependency_found
 
 
 
 
-# Some temp test tests
-CrateDependencies.version_acceptable('0.0.0', '^1.2.3')
-CrateDependencies.version_acceptable('0.0.0', '^1.2')
-CrateDependencies.version_acceptable('0.0.0', '^1')
-CrateDependencies.version_acceptable('0.0.0', '^0.2.3')
-CrateDependencies.version_acceptable('0.0.0', '^0.2')
-CrateDependencies.version_acceptable('0.0.0', '^0.0.3')
-CrateDependencies.version_acceptable('0.0.0', '^0.0')
-CrateDependencies.version_acceptable('0.0.0', '^0')
+# # Some temp tests
+# CrateDependencies.version_acceptable('0.0.0', '^1.2.3')
+# CrateDependencies.version_acceptable('0.0.0', '^1.2')
+# CrateDependencies.version_acceptable('0.0.0', '^1')
+# CrateDependencies.version_acceptable('0.0.0', '^0.2.3')
+# CrateDependencies.version_acceptable('0.0.0', '^0.2')
+# CrateDependencies.version_acceptable('0.0.0', '^0.0.3')
+# CrateDependencies.version_acceptable('0.0.0', '^0.0')
+# CrateDependencies.version_acceptable('0.0.0', '^0')
 
-CrateDependencies.version_acceptable('0.0.0', '~1.2.3')
-CrateDependencies.version_acceptable('0.0.0', '~1.2')
-CrateDependencies.version_acceptable('0.0.0', '~1')
+# CrateDependencies.version_acceptable('0.0.0', '~1.2.3')
+# CrateDependencies.version_acceptable('0.0.0', '~1.2')
+# CrateDependencies.version_acceptable('0.0.0', '~1')
 
+# CrateDependencies.version_acceptable('0.0.0', '*')
+# CrateDependencies.version_acceptable('0.0.0', '1.*')
+# CrateDependencies.version_acceptable('0.0.0', '1.2.*')
+# exit()
 
 cratedep = CrateDependencies( "rand", 
                                 "0.8.2", 
