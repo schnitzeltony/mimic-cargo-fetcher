@@ -7,6 +7,7 @@
 #
 
 import os
+import copy
 import json
 
 # As long as python-core does not contain toml or pytoml (under discussion)
@@ -14,7 +15,7 @@ import json
 import toml
 #import pytoml as toml
 
-import semver
+from bb.utils import is_semver
 
 class CrateDependencies:
     def __init__(self, crate_name, crate_version, crate_lockfile, reg_index_basepath):
@@ -95,7 +96,51 @@ class CrateDependencies:
         return os.path.join(basepath, indexpath, crate_name)
 
     @staticmethod
-    def find_crate_in_index(crate_name, version_desired, reg_index_basepath):
+    def version_acceptable(version, version_rules):
+        # quick easy out
+        if version == version_rules:
+            return True
+        # Check if version matches requirements in version_rules. We process
+        # * caret
+        # * tilde
+        # * wildcard
+        # * multiple rules
+        # see https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html
+        rule_list_in = version_rules.split(',')
+        rule_list_out = []
+        for rule in rule_list_in:
+            separator = '.'
+            version_split = rule.split(separator)
+            # We do support carot OR tilde on first postion only
+            # caret
+            if version_split[0].startswith('^'):
+                version_split[0] = version_split[0].replace('^', '')
+                increment_pos = 0
+                for subver in range(0, len(version_split)):
+                    # caret is handled dfferently on major version 0
+                    if version_split[subver] != '0':
+                        increment_pos = subver
+                        break
+                    elif subver+1 < len(version_split):
+                        increment_pos = subver+1
+                version_split_end = version_split.copy()
+                version_split_end[increment_pos] = str(int(version_split_end[increment_pos] or '0')+1)
+                for subver in range(increment_pos+1, len(version_split_end)):
+                    version_split_end[subver] = '0'
+                # stuff with trailing '0' / make string rule
+                version_split += ['0'] * (3 - len(version_split))
+                version_split_end += ['0'] * (3 - len(version_split_end))
+                version_start = '>=' + separator.join(version_split)
+                version_end = '<' + separator.join(version_split_end)
+                rule_list_out.append(version_start)
+                rule_list_out.append(version_end)
+            # tilde
+            elif version_split[0].startswith('~'):
+                version_split[0] = version_split[0].replace('~', '')
+
+        return False
+    @staticmethod
+    def find_crate_in_index(crate_name, version_required_rules, reg_index_basepath):
         crate_info_found = {}
         index_filename = CrateDependencies.build_pathname_index(crate_name, reg_index_basepath)
         if os.path.exists(index_filename):
@@ -104,19 +149,12 @@ class CrateDependencies:
             version_list = crate_string.splitlines()
             # file in index contains lines with json in version order
             # we start with latest and to find hit early and tests showed that
-            # cargo does same for semver version ranges
+            # cargo does same for version ranges
             version_list.reverse()
             for line in version_list:
                 crate_version_dict = json.loads(line)
                 version_index = crate_version_dict["vers"]
-                # TODO: This does not work we have to take care of
-                # * caret
-                # * tilde
-                # * wildcard
-                # see https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html
-                # use bb.utils version comparisons
-                compare_result = semver.compare(version_index, version_desired)
-                if compare_result >= 0:
+                if CrateDependencies.version_acceptable(version_index, version_required_rules):
                     crate_info_found = crate_version_dict
                     break
         return crate_info_found
@@ -142,7 +180,23 @@ class CrateDependencies:
         return dependency_found
 
 
+
+
 # Some temp test tests
+CrateDependencies.version_acceptable('0.0.0', '^1.2.3')
+CrateDependencies.version_acceptable('0.0.0', '^1.2')
+CrateDependencies.version_acceptable('0.0.0', '^1')
+CrateDependencies.version_acceptable('0.0.0', '^0.2.3')
+CrateDependencies.version_acceptable('0.0.0', '^0.2')
+CrateDependencies.version_acceptable('0.0.0', '^0.0.3')
+CrateDependencies.version_acceptable('0.0.0', '^0.0')
+CrateDependencies.version_acceptable('0.0.0', '^0')
+
+CrateDependencies.version_acceptable('0.0.0', '~1.2.3')
+CrateDependencies.version_acceptable('0.0.0', '~1.2')
+CrateDependencies.version_acceptable('0.0.0', '~1')
+
+
 cratedep = CrateDependencies( "rand", 
                                 "0.8.2", 
                                 "/home/superandy/data/git-projects/rust/rand/Crates.lock",
