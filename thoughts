@@ -30,9 +30,6 @@ sha256 checksum: file at index location / matching version / "cksum":"<sha256>"
 
 unpack with?
 
-Don't forget:
-ignore yanked files in index
-
 
 
 Environment variables

@@ -199,6 +199,9 @@ class CrateDependencies:
             version_list.reverse()
             for line in version_list:
                 crate_version_dict = json.loads(line)
+                # ignore yanked entries
+                if 'yanked' in crate_version_dict and crate_version_dict['yanked']:
+                    continue
                 version_index = crate_version_dict["vers"]
                 if CrateDependencies.version_acceptable(version_index, version_required_rules):
                     crate_info_found = crate_version_dict
