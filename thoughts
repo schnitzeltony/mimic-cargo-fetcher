@@ -1,17 +1,25 @@
-RUST
-
-Fetcher:
-* introduce crate fetcher
-* extent http/git fetcher to start cargo-fetch mimic (how???)
-* introduce crate dependency variable: either default Crate.lock / overridable Crate.toml
+CARGO/RUST
 
 OE:
-* prepend SRC_URI (recipe overridable) with https://github.com/rust-lang/crates.io-index.git
-* magic sequence:
-  * trust Cargo.lock -> fetch
-  * check index for the crate. If ${PN}-${PV} found: extract dependencies
-  * let cargo-native create a Cargo.lock in do_configure and drop a note to user
-* run cargo --frozen at compile time
+
+cratelock://
+  * do_fetch: Cargo.lock -> fetch crates (index is not necessary)
+  * do_unpack: mimic cargo cache:
+      ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823/cache
+      ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823/src
+crateindex://
+  * do_fetch: as git://
+  * do_unpack: mimic cargo cache:
+      ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823
+do_configure:
+  * Run cargo fetch (but different cargo home) If Cargo.lock was changed: Add User message
+do_compile:
+  * Run cargo build --frozen
+do_install:
+
+* prepend SRC_URI (recipe overridable) with crateindex://github.com/rust-lang/crates.io-index.git
+
+
 
 # crates base dir (see crates.io-index/config.json)
 https://crates.io/api/v1/crates/
@@ -25,12 +33,9 @@ Crate download
     * What is in /home/superandy/.cargo/registry/index/github.com-1ecc6299db9ec823 (some odd git / cache)
 
 Registry index:
-  Index location (serde-*): crates.io-index/se/rd/serde  !!! path for crate name length <= 3
-sha256 checksum: file at index location / matching version / "cksum":"<sha256>"
-
-unpack with?
-
-
+  * Index location (serde-*): crates.io-index/se/rd/serde
+  * sha256 checksum: file at index location / matching version / "cksum":"<sha256>"
+ 
 
 Environment variables
 CARGO_HOME
