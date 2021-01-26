@@ -13,13 +13,14 @@ crateindex://
       ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823
 do_configure:
   * Run cargo fetch (but different cargo home) If Cargo.lock was changed: Add User message
+  OR
+  * Run cargo fetch  --frozen In case of err: Add User message devtool
+  * devtool (see npm)
 do_compile:
   * Run cargo build --frozen
 do_install:
 
 * prepend SRC_URI (recipe overridable) with crateindex://github.com/rust-lang/crates.io-index.git
-
-
 
 # crates base dir (see crates.io-index/config.json)
 https://crates.io/api/v1/crates/
@@ -33,6 +34,11 @@ Crate download
     * What is in /home/superandy/.cargo/registry/index/github.com-1ecc6299db9ec823 (some odd git / cache)
 
 Registry index:
+   git init
+   git fetch <download>
+   mkdir cachepath
+   git archive commitid | tar -x -C /somewhere/else
+
   * Index location (serde-*): crates.io-index/se/rd/serde
   * sha256 checksum: file at index location / matching version / "cksum":"<sha256>"
  
