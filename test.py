@@ -7,6 +7,7 @@
 #
 
 import os
+import glob
 import copy
 import json
 
@@ -18,16 +19,17 @@ import toml
 from bb.utils import is_semver, vercmp_string_op
 
 class CrateDependencies:
-    def __init__(self, crate_name, crate_version, crate_lockfile, reg_index_basepath):
+    def __init__(self, reg_index_basepath, rust_lib_root, rust_arch):
+        self.reg_index_basepath = reg_index_basepath
+        self.rustlib_path = os.path.join(rust_lib_root, "/usr/lib/rustlib", rust_arch, 'lib')
+
+    def find_dependencies(self, crate_name, crate_version, crate_lockfile):
         self.crate_name = crate_name
         self.crate_version = crate_version
         self.crate_lockfile = crate_lockfile
-        self.reg_index_basepath = reg_index_basepath
-        self.depend_crates = {}
-        self.depend_unkown = {}
+        self.depend_crates_required = {}
+        self.depend_crates_ignored = {} # either shipped in source or by rust
         self.file_parsed_currently = ""
-
-    def find_dependencies(self):
         # Prefer Cargo.lock if shipped
         if os.path.exists(self.crate_lockfile):
             self.file_parsed_currently = self.crate_lockfile
@@ -35,11 +37,12 @@ class CrateDependencies:
             toml_dict = self.toml_to_dict(self.crate_lockfile)
             if "package" in toml_dict:
                 for package_dict in toml_dict["package"]:
-                    self.add_crate(package_dict, "version", True)
+                    self.add_crate(package_dict, True)
             else:
                 # TODO error handling
                 print("%s is invalid - no 'package' header found" % self.crate_lockfile)
             return
+        # Try registry index
         else:
             if self.find_crate_dependencies_in_index(self.crate_name, 
                                                      self.crate_version, 
@@ -50,32 +53,30 @@ class CrateDependencies:
 
     def print_crates(self):
         print("\nDepend crates:")
-        for key in sorted(self.depend_crates):
-            print("Name:", key, "Versions:", sorted(self.depend_crates[key]))
-        print("Crates:", len(self.depend_crates))
+        for key in sorted(self.depend_crates_required):
+            print("Name:", key, "Versions:", sorted(self.depend_crates_required[key]))
+        print("Crates:", len(self.depend_crates_required))
         print("\nUnhandled depends:")
-        for key in sorted(self.depend_unkown):
-            print("Name:", key, "Versions:", sorted(self.depend_unkown[key]))
-        print("Crates:", len(self.depend_unkown))
+        for key in sorted(self.depend_crates_ignored):
+            print("Name:", key, "Versions:", sorted(self.depend_crates_ignored[key]))
+        print("Crates:", len(self.depend_crates_ignored))
 
-    def add_crate(self, crate_dict, version_tag, source_info_required):
+    def add_crate(self, crate_dict, source_info_required):
         # Note on source_info_required:
         # * In Cargo.lock dependency entries without 'source' are in-tree must
         #   be ignored
         # * In files from registry-index there is no source entry
-        if "name" in crate_dict and version_tag in crate_dict:
+        if "name" in crate_dict and "version" in crate_dict:
             name = crate_dict["name"]
-            version = crate_dict[version_tag]
+            version = crate_dict["version"]
             if not source_info_required or "source" in crate_dict:
-                if not name in self.depend_crates:
-                    self.depend_crates[name] = []
-                if not version in self.depend_crates[name]:
-                    self.depend_crates[name].append(version)
+                dict_to_add = self.depend_crates_required
             else:
-                if not name in self.depend_unkown:
-                    self.depend_unkown[name] = []
-                if not version in self.depend_unkown[name]:
-                    self.depend_unkown[name].append(version)
+                dict_to_add = self.depend_crates_ignored
+            if not name in dict_to_add:
+                dict_to_add[name] = []
+            if not version in dict_to_add[name]:
+                dict_to_add[name].append(version)
         else:
             print("\n\nOoops in", self.file_parsed_currently)
             print(crate_dict)
@@ -189,7 +190,10 @@ class CrateDependencies:
         return all_rules_pass
 
     @staticmethod
-    def find_crate_in_index(crate_name, version_required_rules, reg_index_basepath):
+    def find_crate_in_index(crate_name, 
+                            search_str, # version rules or checksum
+                            reg_index_basepath, 
+                            search_for_checksum = False):
         crate_info_found = {}
         index_filename = CrateDependencies.build_pathname_index(crate_name, reg_index_basepath)
         if os.path.exists(index_filename):
@@ -205,44 +209,80 @@ class CrateDependencies:
                 # ignore yanked entries
                 if 'yanked' in crate_version_dict and crate_version_dict['yanked']:
                     continue
-                version_index = crate_version_dict["vers"]
-                if CrateDependencies.version_acceptable(version_index, version_required_rules):
-                    crate_info_found = crate_version_dict
+                if search_for_checksum:
+                    if crate_version_dict["cksum"].startswith(search_str):
+                        crate_info_found = crate_version_dict
+                else:
+                    version_index = crate_version_dict["vers"]
+                    if CrateDependencies.version_acceptable(version_index, search_str):
+                        crate_info_found = crate_version_dict
+                if crate_info_found != {}:
                     break
         return crate_info_found
 
+    def depend_processed_before(self, name, version):
+        return \
+            (name in self.depend_crates_required and \
+            version in self.depend_crates_required[name]) or \
+            (name in self.depend_crates_ignored and \
+            version in self.depend_crates_ignored[name])
 
     def find_crate_dependencies_in_index(self, crate_name, crate_version, reg_index_basepath):
         index_info = CrateDependencies.find_crate_in_index( crate_name,
                                                             crate_version, 
-                                                            reg_index_basepath)
+                                                            reg_index_basepath,
+                                                            False)
         if index_info != {}:
             for depend in index_info["deps"]:
                 name = depend["name"]
+                # Check if it is a library installed by rust
+                if os.path.exists(self.rustlib_path):
+                    # Try to find a matching version of rustlib
+                    # 1. Is there a library matching crate's name?
+                    libname = 'lib' + name.replace('-', '_')
+                    globstr = os.path.join(self.rustlib_path, libname + '-*.rlib')
+                    rust_lib_in_index = {}
+                    for lib in glob.glob(globstr):
+                        # TODO: Check by checksum if added before
+                        # 2. Find crate in index
+                        chksum = lib.replace(self.rustlib_path, '') \
+                            .replace(libname, '') \
+                            .replace('.rlib', '') \
+                            .replace('-', '') \
+                            .replace('/', '')
+                        rust_lib_in_index = self.find_crate_in_index(
+                            name, 
+                            chksum,
+                            self.reg_index_basepath, 
+                            True)
+                        if rust_lib_in_index != {}:
+                            # 3. Does rustlib match requirements?
+                            if not CrateDependencies.version_acceptable(rust_lib_in_index["vers"], depend["req"]):
+                                rust_lib_in_index = {}
+                            break
+                    if rust_lib_in_index != {}:
+                        crate_to_add = {}
+                        crate_to_add["name"] = name
+                        crate_to_add["version"] = rust_lib_in_index["vers"]
+                        crate_to_add["cksum"] = rust_lib_in_index["cksum"]
+                        # a bit of a hack: By not supplying source and
+                        # supplying source_info_required we force rustlib
+                        # added to ignored list
+                        self.add_crate(crate_to_add, True)
+                        continue
+
                 # Dependency entries in index have version requirements -> find matching
                 depend_in_index = CrateDependencies.find_crate_in_index(
-                    name, depend["req"], reg_index_basepath)
+                    name, depend["req"], reg_index_basepath, False)
                 if depend_in_index != {}:
                     version = depend_in_index["vers"]
-                    # Honestly there were no exact traces in cargo's source 
-                    # found. Ignore list was created by running maiden cargo 
-                    # on several projects
-                    ignore_dep = name in [
-                        'compiler_builtins', 
-                        'rustc-std-workspace-alloc', 
-                        'rustc-std-workspace-core',
-                        'version_check']
-                    devel = depend["kind"] == "dev"
-                    already_added = \
-                        name in self.depend_crates and \
-                        version in self.depend_crates[name]
-                    if already_added or ignore_dep or devel:
+                    if self.depend_processed_before(name, version):
                         continue
                     crate_to_add = {}
                     crate_to_add["name"] = name
                     crate_to_add["version"] = version
                     crate_to_add["cksum"] = depend_in_index["cksum"]
-                    self.add_crate(crate_to_add, "version", False)
+                    self.add_crate(crate_to_add, False)
                     # start recursion
                     self.find_crate_dependencies_in_index(name, version, reg_index_basepath)
         return index_info != {}
@@ -269,24 +309,21 @@ class CrateDependencies:
 # CrateDependencies.version_acceptable('0.0.0', '1.2.*')
 # exit()
 
-cratedep = CrateDependencies( "rand", 
-                                "0.8.2", 
-                                "/home/superandy/data/git-projects/rust/rand/Crates.lock",
-                                "/home/superandy/data/git-projects/rust/crates.io-index")
-cratedep.find_dependencies()
+cratedep = CrateDependencies( "/home/superandy/data/git-projects/rust/crates.io-index", "", "x86_64-unknown-linux-gnu" )
+
+cratedep.find_dependencies( "rand", 
+                            "0.8.2", 
+                            "/home/superandy/data/git-projects/rust/rand/Cargo.lock")
 cratedep.print_crates()
+
 exit()
 
-cratedep = CrateDependencies( "spotifyd", 
-                                "0.3.0", 
-                                "/home/superandy/data/git-projects/rust/spotifyd/Cargo.lock",
-                                "/home/superandy/data/git-projects/rust/crates.io-index")
-cratedep.find_dependencies()
-#cratedep.print_crates()
+cratedep.find_dependencies( "spotifyd", 
+                            "0.3.0", 
+                            "/home/superandy/data/git-projects/rust/spotifyd/Cargo.lock")
+cratedep.print_crates()
 
-cratedep = CrateDependencies( "firefox", 
-                                "68.9.0esr", 
-                                "/home/superandy/tmp/oe-core-glibc/work/cortexa72-mortsgna-linux/firefox/68.9.0esr-r0/firefox-68.9.0/Cargo.lock",
-                                "/home/superandy/data/git-projects/rust/crates.io-index")
-cratedep.find_dependencies()
+cratedep.find_dependencies( "firefox", 
+                            "68.9.0esr", 
+                            "/home/superandy/tmp/oe-core-glibc/work/cortexa72-mortsgna-linux/firefox/68.9.0esr-r0/firefox-68.9.0/Cargo.lock")
 cratedep.print_crates()
