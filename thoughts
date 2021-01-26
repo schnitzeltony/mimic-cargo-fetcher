@@ -37,8 +37,49 @@ CARGO_HOME
 CARGO_REGISTRY_DEFAULT
 CARGO_TARGET_DIR
 
+Cargo index cache format:
+* folder structure as index
+* cache file sequence:
+<0x01> ???
+<ASCII representation of git hash crates.io-index><0x00>
+per line
+  <ASCII semver for fast search><0x00><JSON contents of crate index file><0x00>
+
 
 Docs:
-* reference:
+* reference: https://doc.rust-lang.org/cargo/commands/cargo-doc.html
 * registry / index: https://github.com/rust-lang/cargo/blob/master/src/cargo/sources/registry/mod.rs
+* index / index: https://github.com/rust-lang/cargo/blob/master/src/cargo/sources/registry/index.rs
+* Cargo.lock preference: man cargo fetch
+* man cargo tree
+
+
+Output for 'rand for cargo fetch for first time ($HOME/.cache deleted)
+    Updating crates.io index
+  Downloaded bincode v1.3.1
+  Downloaded libm v0.1.4
+  Downloaded custom_derive v0.1.7
+  Downloaded conv v0.3.3
+  Downloaded average v0.10.6
+  Downloaded byteorder v1.4.2
+  Downloaded float-ord v0.2.0
+  Downloaded libm v0.2.1
+  Downloaded unicode-xid v0.2.1
+  Downloaded packed_simd_2 v0.3.4
+  Downloaded autocfg v1.0.1
+  Downloaded log v0.4.13
+  Downloaded cfg-if v0.1.10
+  Downloaded libc v0.2.82
+  Downloaded syn v1.0.60
+  Downloaded ppv-lite86 v0.2.10
+  Downloaded cfg-if v1.0.0
+  Downloaded getrandom v0.2.2
+  Downloaded num-traits v0.2.14
+  Downloaded proc-macro2 v1.0.24
+  Downloaded wasi v0.10.1+wasi-snapshot-preview1
+  Downloaded quote v1.0.8
+  Downloaded serde_derive v1.0.123
+  Downloaded serde v1.0.123
+  Downloaded 24 crates (1.6 MB) in 1.39s
+
 
