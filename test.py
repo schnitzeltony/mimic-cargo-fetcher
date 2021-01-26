@@ -44,7 +44,7 @@ class CrateDependencies:
             if self.find_crate_dependencies_in_index(self.crate_name, 
                                                      self.crate_version, 
                                                      self.reg_index_basepath):
-                print("Use dependencies of %s-%s from index." % (self.crate_name, self.crate_version))
+                print("Dependencies of %s-%s used from index." % (self.crate_name, self.crate_version))
             else:
                 print("TODO call cargo-native")
 
@@ -52,9 +52,11 @@ class CrateDependencies:
         print("\nDepend crates:")
         for key in sorted(self.depend_crates):
             print("Name:", key, "Versions:", sorted(self.depend_crates[key]))
+        print("Crates:", len(self.depend_crates))
         print("\nUnhandled depends:")
         for key in sorted(self.depend_unkown):
             print("Name:", key, "Versions:", sorted(self.depend_unkown[key]))
+        print("Crates:", len(self.depend_unkown))
 
     def add_crate(self, crate_dict, version_tag, source_info_required):
         # Note on source_info_required:
@@ -169,11 +171,12 @@ class CrateDependencies:
                 rule_list_out.append(version_start)
             if version_end != "":
                 rule_list_out.append(version_end)
-            print(rule, '->', version_start, version_end)
+            #print(rule, '->', version_start, version_end)
 
         # here rule_list_out is set with comparison requirement only
         all_rules_pass = True
         for rule in rule_list_out:
+            rule = ''.join(rule.split())
             # extract operator
             for pos in range(0, len(rule)):
                 if not rule[pos] in comparison_chars:
@@ -210,22 +213,39 @@ class CrateDependencies:
 
 
     def find_crate_dependencies_in_index(self, crate_name, crate_version, reg_index_basepath):
-        dependency_found = False
         index_info = CrateDependencies.find_crate_in_index( crate_name,
                                                             crate_version, 
                                                             reg_index_basepath)
         if index_info != {}:
-            dependency_found = True
             for depend in index_info["deps"]:
-                # Dependency entries in index do not pin version -> find matching
+                name = depend["name"]
+                # Dependency entries in index have version requirements -> find matching
                 depend_in_index = CrateDependencies.find_crate_in_index(
-                    depend["name"], depend["req"], reg_index_basepath)
+                    name, depend["req"], reg_index_basepath)
                 if depend_in_index != {}:
-                    depend["version"] = depend_in_index["vers"]
-                    self.add_crate(depend, "version", False)
-                    # TODO add depends of depend
-                    #find_crate_dependencies_in_index(self, depend["name"], crate_version, reg_index_basepath)
-        return dependency_found
+                    version = depend_in_index["vers"]
+                    # Honestly there were no exact traces in cargo's source 
+                    # found. Ignore list was created by running maiden cargo 
+                    # on several projects
+                    ignore_dep = name in [
+                        'compiler_builtins', 
+                        'rustc-std-workspace-alloc', 
+                        'rustc-std-workspace-core',
+                        'version_check']
+                    devel = depend["kind"] == "dev"
+                    already_added = \
+                        name in self.depend_crates and \
+                        version in self.depend_crates[name]
+                    if already_added or ignore_dep or devel:
+                        continue
+                    crate_to_add = {}
+                    crate_to_add["name"] = name
+                    crate_to_add["version"] = version
+                    crate_to_add["cksum"] = depend_in_index["cksum"]
+                    self.add_crate(crate_to_add, "version", False)
+                    # start recursion
+                    self.find_crate_dependencies_in_index(name, version, reg_index_basepath)
+        return index_info != {}
 
 
 
