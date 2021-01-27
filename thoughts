@@ -7,7 +7,7 @@ cratelock://
   * do_unpack: mimic cargo cache:
       ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823/cache
       ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823/src
-crateindex://
+DONE crateindex://
   * do_fetch: as git://
   * do_unpack: mimic cargo cache:
       ${CARGO_HOME}/registry/cache/github.com-1ecc6299db9ec823
@@ -19,6 +19,12 @@ do_configure:
 do_compile:
   * Run cargo build --frozen
 do_install:
+
+
+Fetcher tests:
+* shallow
+* commit change
+* devtool
 
 * prepend SRC_URI (recipe overridable) with crateindex://github.com/rust-lang/crates.io-index.git
 
@@ -33,11 +39,6 @@ Crate download
     * How is github.com-1ecc6299db9ec823 created
     * What is in /home/superandy/.cargo/registry/index/github.com-1ecc6299db9ec823 (some odd git / cache)
 
-Registry index:
-   git init
-   git fetch <download>
-   mkdir cachepath
-   git archive commitid | tar -x -C /somewhere/else
 
   * Index location (serde-*): crates.io-index/se/rd/serde
   * sha256 checksum: file at index location / matching version / "cksum":"<sha256>"
@@ -48,7 +49,7 @@ CARGO_HOME
 CARGO_REGISTRY_DEFAULT
 CARGO_TARGET_DIR
 
-Cargo index cache format:
+DONE Cargo index cache format:
 * folder structure as index
 * cache file sequence:
 <0x01> ???
