@@ -64,6 +64,7 @@ Docs:
 * index / index: https://github.com/rust-lang/cargo/blob/master/src/cargo/sources/registry/index.rs
 * Cargo.lock preference: man cargo fetch
 * man cargo tree
+* index hash: https://gitlab.com/kornelski/LTS/-/blob/master/src/hash.rs
 
 
 Output for 'rand for cargo fetch for first time ($HOME/.cache deleted)
